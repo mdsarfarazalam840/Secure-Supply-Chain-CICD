@@ -52,7 +52,7 @@ jobs:
       - name: Push Docker Image
         id: push
         run: |
-          docker push ${{ secrets.DOCKER_USERNAME }}/secure-app:${{ github.sha }}
+          docker push ${{ secrets.DOCKER_USERNAME }}/securesupplyshaincicd:${{ github.sha }}
           DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' ${{ secrets.DOCKER_USERNAME }}/securesupplyshaincicd:${{ github.sha }})
           echo "digest=$DIGEST" >> $GITHUB_OUTPUT
 
