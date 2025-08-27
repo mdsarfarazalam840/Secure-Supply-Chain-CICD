@@ -1,0 +1,16 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-signed-images
+spec:
+  validationFailureAction: enforce
+  background: true
+  rules:
+    - name: check-signed-images
+      match:
+        resources:
+          kinds:
+            - Pod
+      verifyImages:
+        - image: "*"
+          key: "cosign.pub"   # public key to verify

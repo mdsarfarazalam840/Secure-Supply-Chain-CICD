@@ -1,0 +1,7 @@
+# Ignore cosign keys
+cosign.key
+cosign.pub
+
+# Ignore all .key or .pem files (optional, more secure)
+*.key
+*.pem
