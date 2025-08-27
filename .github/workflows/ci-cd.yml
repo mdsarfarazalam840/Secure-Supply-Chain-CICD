@@ -29,13 +29,24 @@ jobs:
           exit-code: '0'
           severity: 'CRITICAL,HIGH'
 
-      - name: Generate SBOM with Syft
+
+      - name: Install Syft
         run: |
           curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh
           mkdir -p $HOME/.local/bin
-          mv ./bin/syft $HOME/.local/bin/syft
+          mv ./bin/syft $HOME/.local/bin/
           echo "$HOME/.local/bin" >> $GITHUB_PATH
-          syft ${{ secrets.DOCKER_USERNAME }}/secure-app:${{ github.sha }} -o json > sbom.json
+  
+      - name: Generate SBOM
+        run: syft ${{ secrets.DOCKER_USERNAME }}/secure-app:${{ github.sha }} -o json > sbom.json
+  
+      # - name: Generate SBOM with Syft
+      #   run: |
+      #     curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh
+      #     mkdir -p $HOME/.local/bin
+      #     mv ./bin/syft $HOME/.local/bin/syft
+      #     echo "$HOME/.local/bin" >> $GITHUB_PATH
+      #     syft ${{ secrets.DOCKER_USERNAME }}/secure-app:${{ github.sha }} -o json > sbom.json
 
       - name: Install Cosign
         run: |
