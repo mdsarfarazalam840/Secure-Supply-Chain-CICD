@@ -19,12 +19,12 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Build Docker Image
-        run: docker build -t ${{ secrets.DOCKER_USERNAME }}/secure-app:${{ github.sha }} ./app
+        run: docker build -t ${{ secrets.DOCKER_USERNAME }}/securesupplyshaincicd:${{ github.sha }} ./app
 
       - name: Scan with Trivy
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ secrets.DOCKER_USERNAME }}/secure-app:${{ github.sha }}
+          image-ref: ${{ secrets.DOCKER_USERNAME }}/securesupplyshaincicd:${{ github.sha }}
           format: 'table'
           exit-code: '0'
           severity: 'CRITICAL,HIGH'
