@@ -38,7 +38,7 @@ jobs:
           echo "$HOME/.local/bin" >> $GITHUB_PATH
   
       - name: Generate SBOM
-        run: syft ${{ secrets.DOCKER_USERNAME }}/secure-app:${{ github.sha }} -o json > sbom.json
+        run: syft ${{ secrets.DOCKER_USERNAME }}/securesupplyshaincicd:${{ github.sha }} -o json > sbom.json
   
 
       - name: Install Cosign
