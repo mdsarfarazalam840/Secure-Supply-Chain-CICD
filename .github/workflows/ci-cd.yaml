@@ -48,13 +48,20 @@ jobs:
           mv cosign $HOME/.local/bin/cosign
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
+
+      - name: Push Docker Image
+        id: push
+        run: |
+          docker push ${{ secrets.DOCKER_USERNAME }}/secure-app:${{ github.sha }}
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' ${{ secrets.DOCKER_USERNAME }}/securesupplyshaincicd:${{ github.sha }})
+          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+
       - name: Sign Docker Image
-        run: cosign sign --key env://COSIGN_KEY ${{ secrets.DOCKER_USERNAME }}/secure-app:${{ github.sha }}
+        run: cosign sign --key env://COSIGN_KEY ${{ steps.push.outputs.digest }}
         env:
           COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
 
-      - name: Push Docker Image
-        run: docker push ${{ secrets.DOCKER_USERNAME }}/secure-app:${{ github.sha }}
+
 
   deploy:
     runs-on: self-hosted   # 👈 Use your WSL runner
