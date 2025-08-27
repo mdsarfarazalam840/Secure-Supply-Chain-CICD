@@ -57,7 +57,7 @@ jobs:
           echo "digest=$DIGEST" >> $GITHUB_OUTPUT
 
       - name: Sign Docker Image
-        run: cosign sign --key env://COSIGN_KEY ${{ steps.push.outputs.digest }}
+        run: cosign sign --yes --key env://COSIGN_KEY ${{ steps.push.outputs.digest }}
         env:
           COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
 
