@@ -32,7 +32,8 @@ jobs:
       - name: Generate SBOM with Syft
         run: |
           curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh
-          ./syft ${{ secrets.DOCKER_USERNAME }}/secure-app:${{ github.sha }} -o json > sbom.json
+          sudo mv ./bin/syft /usr/local/bin/syft
+          syft ${{ secrets.DOCKER_USERNAME }}/secure-app:${{ github.sha }} -o json > sbom.json
 
       - name: Install Cosign
         run: |
