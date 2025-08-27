@@ -78,8 +78,10 @@ jobs:
         run: |
           export IMAGE_URI=${DOCKER_USERNAME}/securesupplyshaincicd:${IMAGE_TAG}
           echo "IMAGE_URI=$IMAGE_URI"
-          envsubst '$IMAGE_URI' < k8s/deployment.yaml | kubectl apply -f -
+          envsubst '$IMAGE_URI' < k8s/deployment.yaml > substituted.yaml
+          echo "--- Final Deployment Manifest ---"
           cat substituted.yaml
+          kubectl apply -f substituted.yaml
           kubectl apply -f k8s/service.yaml
 
       - name: Verify rollout
