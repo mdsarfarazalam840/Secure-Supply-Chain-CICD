@@ -14,6 +14,6 @@ spec:
     spec:
       containers:
       - name: secure-app
-        image: ${IMAGE_URI}   # Use environment variable from CI/CD
+        image: "${IMAGE_URI}"   # Use environment variable from CI/CD
         ports:
         - containerPort: 3000
