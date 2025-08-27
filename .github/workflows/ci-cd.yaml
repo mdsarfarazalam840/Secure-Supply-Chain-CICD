@@ -74,7 +74,8 @@ jobs:
         env:
           IMAGE_URI: ${{ needs.build-scan-sign.outputs.image_uri }}
         run: |
-          envsubst < k8s/deployment.yaml | kubectl apply -f -
+          echo "IMAGE_URI=$IMAGE_URI"
+          envsubst '$IMAGE_URI' < k8s/deployment.yaml | kubectl apply -f -
           kubectl apply -f k8s/service.yaml
 
       - name: Verify rollout
