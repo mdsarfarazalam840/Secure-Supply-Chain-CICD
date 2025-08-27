@@ -76,9 +76,10 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
           # IMAGE_URI: ${{ needs.build-scan-sign.outputs.image_uri }}
         run: |
-          IMAGE_URI=${DOCKER_USERNAME}/securesupplyshaincicd:${IMAGE_TAG}
+          export IMAGE_URI=${DOCKER_USERNAME}/securesupplyshaincicd:${IMAGE_TAG}
           echo "IMAGE_URI=$IMAGE_URI"
           envsubst '$IMAGE_URI' < k8s/deployment.yaml | kubectl apply -f -
+          cat substituted.yaml
           kubectl apply -f k8s/service.yaml
 
       - name: Verify rollout
