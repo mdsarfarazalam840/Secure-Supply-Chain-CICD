@@ -9,9 +9,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 
-
 echo -e "${GREEN}🚀 Setting up Secure Supply Chain CI/CD on AWS with Docker Hub${NC}"
-
 
 
 # Generate Terraform variables from .env
@@ -55,8 +53,9 @@ check_command kubectl
 check_command docker
 
 # Load environment variables
-if [ -f scripts/load-env.sh ]; then
-    source scripts/load-env.sh
+if [ -f .env ]; then
+    echo -e "${GREEN}✅ Loading environment variables from .env${NC}"
+    export $(grep -v '^#' .env | xargs)
 else
     echo -e "${RED}❌ load-env.sh script not found${NC}"
     exit 1
@@ -96,11 +95,7 @@ deploy_infrastructure() {
     terraform init
     
     # Plan the deployment
-    terraform plan \
-        -var="cluster_name=${EKS_CLUSTER_NAME}" \
-        -var="region=${AWS_REGION}" \
-        -var="app_name=${APP_NAME}" \
-        -out=tfplan
+    terraform plan -out=tfplan
     
     # Apply the plan
     echo -e "${YELLOW}Applying Terraform plan...${NC}"
@@ -115,6 +110,9 @@ deploy_infrastructure() {
     echo -e "${GREEN}✅ Infrastructure deployed successfully${NC}"
     echo -e "${GREEN}Cluster Name: $CLUSTER_NAME${NC}"
     echo -e "${GREEN}GitHub Actions Role ARN: $ROLE_ARN${NC}"
+    
+    # Store ROLE_ARN for later use
+    export ROLE_ARN
 }
 
 # Configure kubectl
@@ -148,7 +146,7 @@ create_github_secrets() {
     echo -e "${YELLOW}1. Go to your GitHub repository${NC}"
     echo -e "${YELLOW}2. Navigate to Settings > Secrets and variables > Actions${NC}"
     echo -e "${YELLOW}3. Add the following secrets:${NC}"
-    echo -e "${GREEN} - AWS_ROLE_ARN: (will be provided after terraform deployment)${NC}"
+    echo -e "${GREEN} - AWS_ROLE_ARN: $ROLE_ARN${NC}"
     echo -e "${GREEN} - DOCKER_USERNAME: Your Docker Hub username${NC}"
     echo -e "${GREEN} - DOCKER_PASSWORD: Your Docker Hub password/token${NC}"
     echo ""
