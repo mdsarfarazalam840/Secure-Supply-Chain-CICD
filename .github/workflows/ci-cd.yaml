@@ -3,29 +3,54 @@ name: Secure Supply Chain CI/CD
 on:
   push:
     branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  AWS_REGION: us-east-1
+  EKS_CLUSTER: secure-supply-chain-cluster
+  DOCKER_IMAGE: ${{ secrets.DOCKER_USERNAME }}/secure-supply-chain-app
+
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
   build-scan-sign:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     outputs:
       image_uri: ${{ steps.push.outputs.digest }}
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Log in to DockerHub
-        uses: docker/login-action@v2
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build Docker Image
-        run: docker build -t ${{ secrets.DOCKER_USERNAME }}/securesupplyshaincicd:${{ github.sha }} ./app
+      - name: Build, tag, and push image to Docker Hub
+        id: push
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t ${{ env.DOCKER_IMAGE }}:$IMAGE_TAG ./app
+          docker build -t ${{ env.DOCKER_IMAGE }}:latest ./app
+          docker push ${{ env.DOCKER_IMAGE }}:$IMAGE_TAG
+          docker push ${{ env.DOCKER_IMAGE }}:latest
+          echo "digest=${{ env.DOCKER_IMAGE }}@$(docker inspect --format='{{index .RepoDigests 0}}' ${{ env.DOCKER_IMAGE }}:$IMAGE_TAG | cut -d'@' -f2)" >> $GITHUB_OUTPUT
 
       - name: Scan with Trivy
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ secrets.DOCKER_USERNAME }}/securesupplyshaincicd:${{ github.sha }}
+          image-ref: ${{ env.DOCKER_IMAGE }}:${{ github.sha }}
           format: 'table'
           exit-code: '0'
           severity: 'CRITICAL,HIGH'
@@ -38,7 +63,9 @@ jobs:
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Generate SBOM
-        run: syft ${{ secrets.DOCKER_USERNAME }}/securesupplyshaincicd:${{ github.sha }} -o json > sbom.json
+        run: |
+          syft ${{ env.DOCKER_IMAGE }}:${{ github.sha }} -o json > sbom.json
+          echo "SBOM generated successfully"
 
       - name: Install Cosign
         run: |
@@ -47,42 +74,122 @@ jobs:
           mv cosign $HOME/.local/bin/cosign
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      - name: Push Docker Image
-        id: push
+      - name: Generate Cosign Key Pair
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
-          docker push ${{ secrets.DOCKER_USERNAME }}/securesupplyshaincicd:${{ github.sha }}
-          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' ${{ secrets.DOCKER_USERNAME }}/securesupplyshaincicd:${{ github.sha }})
-          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+          cosign generate-key-pair
+          echo "COSIGN_PRIVATE_KEY<<EOF" >> $GITHUB_ENV
+          cat cosign.key >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+          echo "COSIGN_PUBLIC_KEY<<EOF" >> $GITHUB_ENV
+          cat cosign.pub >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
 
       - name: Sign Docker Image
-        run: cosign sign --yes --key env://COSIGN_KEY ${{ steps.push.outputs.digest }}
-        env:
-          COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          echo "${{ env.COSIGN_PRIVATE_KEY }}" > cosign.key
+          chmod 600 cosign.key
+          cosign sign --yes --key cosign.key ${{ steps.push.outputs.digest }}
+          rm cosign.key
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v3
+        with:
+          name: sbom
+          path: sbom.json
+
+      - name: Upload Cosign Public Key
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v3
+        with:
+          name: cosign-public-key
+          path: cosign.pub
 
   deploy:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
+    needs: build-scan-sign
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER }}
+
+      - name: Download Cosign Public Key
+        uses: actions/download-artifact@v3
+        with:
+          name: cosign-public-key
+
+      - name: Update Kyverno Policy with Public Key
+        run: |
+          if [ -f "cosign.pub" ]; then
+            PUBLIC_KEY=$(cat cosign.pub)
+            sed -i "s|# This will be replaced with the actual public key from Cosign|$PUBLIC_KEY|g" k8s/policy.yaml
+            echo "Updated Kyverno policy with Cosign public key"
+          else
+            echo "Cosign public key not found, using default policy"
+          fi
+
+      - name: Deploy to EKS
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          export IMAGE_URI=${{ env.DOCKER_IMAGE }}:${IMAGE_TAG}
+          echo "Deploying image: $IMAGE_URI"
+          
+          # Apply Kyverno policy for image verification
+          kubectl apply -f k8s/policy.yaml
+          
+          # Deploy application
+          envsubst '$IMAGE_URI' < k8s/deployment.yaml > substituted.yaml
+          kubectl apply -f substituted.yaml
+          kubectl apply -f k8s/service.yaml
+          
+          # Wait for deployment to be ready
+          kubectl rollout status deployment/secure-app --timeout=300s
+
+      - name: Get Load Balancer URL
+        run: |
+          echo "Waiting for Load Balancer to be provisioned..."
+          kubectl get service secure-app-service -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' > lb_url.txt
+          echo "Load Balancer URL: $(cat lb_url.txt)"
+
+      - name: Upload Load Balancer URL
+        uses: actions/upload-artifact@v3
+        with:
+          name: loadbalancer-url
+          path: lb_url.txt
+
+  security-scan:
+    runs-on: ubuntu-latest
     needs: build-scan-sign
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Ensure Minikube is running
-        run: |
-          minikube status || minikube start
+      - name: Download SBOM
+        uses: actions/download-artifact@v3
+        with:
+          name: sbom
 
-      - name: Deploy manifests with dynamic image
-        env:
-          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
-          IMAGE_TAG: ${{ github.sha }}
-          # IMAGE_URI: ${{ needs.build-scan-sign.outputs.image_uri }}
-        run: |
-          export IMAGE_URI=${DOCKER_USERNAME}/securesupplyshaincicd:${IMAGE_TAG}
-          echo "IMAGE_URI=$IMAGE_URI"
-          envsubst '$IMAGE_URI' < k8s/deployment.yaml > substituted.yaml
-          echo "--- Final Deployment Manifest ---"
-          cat substituted.yaml
-          kubectl apply -f substituted.yaml
-          kubectl apply -f k8s/service.yaml
+      - name: Run Dependency Check
+        uses: dependency-check/Dependency-Check_Action@main
+        with:
+          project: 'Secure Supply Chain'
+          path: '.'
+          format: 'HTML'
+          out: 'reports'
 
-      - name: Verify rollout
-        run: kubectl rollout status deployment/secure-app
+      - name: Upload Security Report
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-report
+          path: reports/

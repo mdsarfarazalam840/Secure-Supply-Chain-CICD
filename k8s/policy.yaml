@@ -13,4 +13,13 @@ spec:
             - Pod
       verifyImages:
         - image: "*"
-          key: "cosign.pub"   # public key to verify
+          key: |
+            -----BEGIN PUBLIC KEY-----
+            # This will be replaced with the actual public key from Cosign
+            -----END PUBLIC KEY-----
+      mutateImages:
+        - image: "*"
+          key: |
+            -----BEGIN PUBLIC KEY-----
+            # This will be replaced with the actual public key from Cosign
+            -----END PUBLIC KEY-----
