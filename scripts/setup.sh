@@ -8,23 +8,63 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+
+
 echo -e "${GREEN}🚀 Setting up Secure Supply Chain CI/CD on AWS with Docker Hub${NC}"
 
-# Check if required tools are installed
-check_requirements() {
-    echo -e "${YELLOW}Checking requirements...${NC}"
+
+
+# Generate Terraform variables from .env
+generate_terraform_vars() {
+    echo -e "${YELLOW}Generating Terraform variables...${NC}"
     
-    command -v aws >/dev/null 2>&1 || { echo -e "${RED}AWS CLI is required but not installed. Aborting.${NC}" >&2; exit 1; }
-    command -v terraform >/dev/null 2>&1 || { echo -e "${RED}Terraform is required but not installed. Aborting.${NC}" >&2; exit 1; }
-    command -v kubectl >/dev/null 2>&1 || { echo -e "${RED}kubectl is required but not installed. Aborting.${NC}" >&2; exit 1; }
+    # Get GitHub repository
+    GITHUB_REPO=$(git remote get-url origin | sed 's/.*github.com[:/]\([^/]*\/[^/]*\).*/\1/' | sed 's/\.git$//')
     
-    echo -e "${GREEN}✅ All requirements met${NC}"
+    cat > terraform/terraform.tfvars << EOF
+# Generated from .env file
+aws_region = "${AWS_REGION}"
+project_name = "${APP_NAME}"
+github_repository = "${GITHUB_REPO}"
+environment = "${NODE_ENV}"
+
+vpc_cidr = "10.0.0.0/16"
+private_subnets = ["10.0.1.0/24", "10.0.2.0/24"]
+public_subnets = ["10.0.101.0/24", "10.0.102.0/24"]
+EOF
+    
+    echo -e "${GREEN}✅ Terraform variables generated${NC}"
 }
+
+
+# Function to check if command exists
+check_command() {
+    if ! command -v $1 &> /dev/null; then
+        echo -e "${RED}❌ $1 is not installed${NC}"
+        exit 1
+    else
+        echo -e "${GREEN}✅ $1 is installed${NC}"
+    fi
+}
+
+# Check prerequisites
+echo -e "${YELLOW}📋 Checking prerequisites...${NC}"
+check_command aws
+check_command terraform
+check_command kubectl
+check_command docker
+
+# Load environment variables
+if [ -f scripts/load-env.sh ]; then
+    source scripts/load-env.sh
+else
+    echo -e "${RED}❌ load-env.sh script not found${NC}"
+    exit 1
+fi
 
 # Configure AWS credentials
 configure_aws() {
     echo -e "${YELLOW}Configuring AWS credentials...${NC}"
-    
     if ! aws sts get-caller-identity >/dev/null 2>&1; then
         echo -e "${YELLOW}Please configure your AWS credentials:${NC}"
         aws configure
@@ -36,7 +76,6 @@ configure_aws() {
 # Update variables
 update_variables() {
     echo -e "${YELLOW}Updating Terraform variables...${NC}"
-    
     # Get GitHub repository
     GITHUB_REPO=$(git remote get-url origin | sed 's/.*github.com[:/]\([^/]*\/[^/]*\).*/\1/' | sed 's/\.git$//')
     
@@ -45,23 +84,23 @@ update_variables() {
         read -p "GitHub repository: " GITHUB_REPO
     fi
     
-    # Update terraform/variables.tf
-    sed -i "s/your-username\/secure-supply-chain-cicd/$GITHUB_REPO/g" terraform/variables.tf
-    
     echo -e "${GREEN}✅ Variables updated${NC}"
 }
 
 # Deploy infrastructure
 deploy_infrastructure() {
     echo -e "${YELLOW}Deploying AWS infrastructure...${NC}"
-    
     cd terraform
     
     # Initialize Terraform
     terraform init
     
     # Plan the deployment
-    terraform plan -out=tfplan
+    terraform plan \
+        -var="cluster_name=${EKS_CLUSTER_NAME}" \
+        -var="region=${AWS_REGION}" \
+        -var="app_name=${APP_NAME}" \
+        -out=tfplan
     
     # Apply the plan
     echo -e "${YELLOW}Applying Terraform plan...${NC}"
@@ -80,22 +119,14 @@ deploy_infrastructure() {
 
 # Configure kubectl
 configure_kubectl() {
-    echo -e "${YELLOW}Configuring kubectl...${NC}"
-    
-    cd terraform
-    CLUSTER_NAME=$(terraform output -raw cluster_name)
-    AWS_REGION=$(terraform output -raw cluster_endpoint | grep -o 'us-[a-z0-9-]*' | head -1)
-    cd ..
-    
-    aws eks update-kubeconfig --region $AWS_REGION --name $CLUSTER_NAME
-    
+    echo -e "${YELLOW}⚙️ Configuring kubectl...${NC}"
+    aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER_NAME}
     echo -e "${GREEN}✅ kubectl configured${NC}"
 }
 
 # Install additional tools
 install_tools() {
     echo -e "${YELLOW}Installing additional tools...${NC}"
-    
     # Install envsubst if not available
     if ! command -v envsubst >/dev/null 2>&1; then
         echo -e "${YELLOW}Installing gettext (for envsubst)...${NC}"
@@ -107,7 +138,6 @@ install_tools() {
             brew install gettext
         fi
     fi
-    
     echo -e "${GREEN}✅ Tools installed${NC}"
 }
 
@@ -118,22 +148,17 @@ create_github_secrets() {
     echo -e "${YELLOW}1. Go to your GitHub repository${NC}"
     echo -e "${YELLOW}2. Navigate to Settings > Secrets and variables > Actions${NC}"
     echo -e "${YELLOW}3. Add the following secrets:${NC}"
-    echo -e "${GREEN}   - AWS_ROLE_ARN: $ROLE_ARN${NC}"
-    echo -e "${GREEN}   - DOCKER_USERNAME: Your Docker Hub username${NC}"
-    echo -e "${GREEN}   - DOCKER_PASSWORD: Your Docker Hub password/token${NC}"
-    echo ""
-    echo -e "${YELLOW}📋 Copy these commands to add the secrets:${NC}"
-    echo -e "${GREEN}gh secret set AWS_ROLE_ARN --body \"$ROLE_ARN\"${NC}"
-    echo -e "${GREEN}gh secret set DOCKER_USERNAME --body \"your-docker-username\"${NC}"
-    echo -e "${GREEN}gh secret set DOCKER_PASSWORD --body \"your-docker-password\"${NC}"
+    echo -e "${GREEN} - AWS_ROLE_ARN: (will be provided after terraform deployment)${NC}"
+    echo -e "${GREEN} - DOCKER_USERNAME: Your Docker Hub username${NC}"
+    echo -e "${GREEN} - DOCKER_PASSWORD: Your Docker Hub password/token${NC}"
     echo ""
     echo -e "${YELLOW}💡 Note: For DOCKER_PASSWORD, use a Docker Hub access token instead of your password for better security${NC}"
 }
 
 # Main execution
 main() {
-    check_requirements
     configure_aws
+    generate_terraform_vars  # Add this line
     update_variables
     deploy_infrastructure
     configure_kubectl
@@ -147,6 +172,7 @@ main() {
     echo -e "${GREEN}3. Monitor the deployment in GitHub Actions${NC}"
     echo -e "${GREEN}4. Images will be built and pushed to Docker Hub${NC}"
     echo -e "${GREEN}5. Application will be deployed to AWS EKS${NC}"
+    echo -e "${GREEN}🎉 Setup completed successfully!${NC}"
 }
 
 # Run main function

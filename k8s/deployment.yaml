@@ -1,28 +1,35 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: secure-app
+  name: ${DEPLOYMENT_NAME}
   labels:
-    app: secure-app
+    app: ${APP_NAME}
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: secure-app
+      app: ${APP_NAME}
   template:
     metadata:
       labels:
-        app: secure-app
+        app: ${APP_NAME}
     spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
         fsGroup: 2000
       containers:
-      - name: secure-app
+      - name: ${APP_NAME}
         image: "${IMAGE_URI}"
         ports:
         - containerPort: 3000
+        env:
+        - name: NODE_ENV
+          value: "${NODE_ENV}"
+        - name: APP_NAME
+          value: "${APP_NAME}"
+        - name: PORT
+          value: "3000"
         resources:
           requests:
             memory: "128Mi"
@@ -44,7 +51,71 @@ spec:
           periodSeconds: 5
         securityContext:
           allowPrivilegeEscalation: false
-          readOnlyRootFilesystem: true
+          readOnlyRootFilesystem: false  # Changed to false for dotenv file access
           capabilities:
             drop:
             - ALL
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# apiVersion: apps/v1
+# kind: Deployment
+# metadata:
+#   name: secure-app
+#   labels:
+#     app: secure-app
+# spec:
+#   replicas: 2
+#   selector:
+#     matchLabels:
+#       app: secure-app
+#   template:
+#     metadata:
+#       labels:
+#         app: secure-app
+#     spec:
+#       securityContext:
+#         runAsNonRoot: true
+#         runAsUser: 1000
+#         fsGroup: 2000
+#       containers:
+#       - name: secure-app
+#         image: "${IMAGE_URI}"
+#         ports:
+#         - containerPort: 3000
+#         resources:
+#           requests:
+#             memory: "128Mi"
+#             cpu: "100m"
+#           limits:
+#             memory: "256Mi"
+#             cpu: "200m"
+#         livenessProbe:
+#           httpGet:
+#             path: /health
+#             port: 3000
+#           initialDelaySeconds: 30
+#           periodSeconds: 10
+#         readinessProbe:
+#           httpGet:
+#             path: /ready
+#             port: 3000
+#           initialDelaySeconds: 5
+#           periodSeconds: 5
+#         securityContext:
+#           allowPrivilegeEscalation: false
+#           readOnlyRootFilesystem: true
+#           capabilities:
+#             drop:
+#             - ALL
