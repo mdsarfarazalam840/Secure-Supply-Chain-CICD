@@ -19,8 +19,13 @@ RUN adduser -S nodejs -u 1001
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci --only=production && npm cache clean --force
+# Install dependencies with fallback logic
+RUN if [ -f package-lock.json ]; then \
+        npm ci --omit=dev; \
+    else \
+        npm install --only=production; \
+    fi && \
+    npm cache clean --force
 
 # Copy application code
 COPY . .
