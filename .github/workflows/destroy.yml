@@ -3,6 +3,11 @@ name: Destroy AWS Infrastructure
 on:
   workflow_dispatch:  # This lets you trigger manually from the GitHub Actions UI
 
+permissions:
+  id-token: write
+  contents: read
+
+
 jobs:
   destroy:
     name: Terraform Destroy
