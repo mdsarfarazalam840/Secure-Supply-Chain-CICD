@@ -32,16 +32,15 @@ terraform/terraform.tfvars
 .aws/
 *.pem
 
-# IDE files
-.vscode/
-.idea/
-*.swp
-*.swo
+# # IDE files
+# .vscode/
+# .idea/
+# *.swp
+# *.swo
 
 # OS files
 .DS_Store
 .DS_Store?
-._*
 .Spotlight-V100
 .Trashes
 ehthumbs.db
