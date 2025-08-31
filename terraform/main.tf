@@ -1,20 +1,3 @@
-terraform {
-  required_version = ">= 1.0"
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-    kubernetes = {
-      source  = "hashicorp/kubernetes"
-      version = "~> 2.0"
-    }
-    helm = {
-      source  = "hashicorp/helm"
-      version = "~> 2.0"
-    }
-  }
-}
 
 provider "aws" {
   region = var.aws_region
@@ -125,27 +108,7 @@ resource "aws_iam_role_policy" "eks_access" {
 data "aws_caller_identity" "current" {}
 
 # Outputs
-output "cluster_endpoint" {
-  description = "Endpoint for EKS control plane"
-  value       = module.eks.cluster_endpoint
-}
 
-output "cluster_security_group_id" {
-  description = "Security group ID attached to the EKS cluster"
-  value       = module.eks.cluster_security_group_id
-}
 
-output "cluster_iam_role_name" {
-  description = "IAM role name associated with EKS cluster"
-  value       = module.eks.cluster_iam_role_name
-}
 
-output "cluster_certificate_authority_data" {
-  description = "Base64 encoded certificate data required to communicate with the cluster"
-  value       = module.eks.cluster_certificate_authority_data
-}
 
-output "github_actions_role_arn" {
-  description = "ARN of the IAM role for GitHub Actions"
-  value       = aws_iam_role.github_actions.arn
-}
