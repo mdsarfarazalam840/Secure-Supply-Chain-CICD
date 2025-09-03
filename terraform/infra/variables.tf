@@ -5,7 +5,7 @@ variable "aws_region" {
 }
 
 variable "project_name" {
-  description = "Name of the project"
+  description = "Secure Supply Chain CI/CD"
   type        = string
   default     = "secure-supply-chain"
 }
@@ -37,7 +37,7 @@ variable "public_subnets" {
 variable "github_repository" {
   description = "GitHub repository in format owner/repo"
   type        = string
-  default     = "your-username/secure-supply-chain-cicd"  # Update this
+  default     = "mdsarfarazalam840/secure-supply-chain-cicd"  # Update this
 }
 
 variable "common_tags" {

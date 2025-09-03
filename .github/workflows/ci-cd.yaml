@@ -2,9 +2,9 @@ name: Secure Supply Chain CI/CD
 
 on:
   push:
-    branches: [ "main", "clouds" ]
+    branches: ["main", "clouds"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 env:
   AWS_REGION: us-east-1
@@ -16,11 +16,13 @@ permissions:
   contents: read
 
 jobs:
-  # Stage 1: Terraform Infrastructure
   terraform-infra:
-    name: Provision/Update EKS Infrastructure
+    name: Provision/Update AWS Infra and EKS Cluster
     runs-on: ubuntu-latest
-
+    outputs:
+      cluster_endpoint: ${{ steps.get_outputs.outputs.cluster_endpoint }}
+      cluster_ca_certificate: ${{ steps.get_outputs.outputs.cluster_ca_certificate }}
+      cluster_name: ${{ steps.get_outputs.outputs.cluster_name }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -30,7 +32,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           role-session-name: GitHubActions
-          aws-region: us-east-1
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
@@ -38,58 +40,67 @@ jobs:
           terraform_version: 1.6.0
 
       - name: Terraform Init
-        working-directory: ./terraform
+        working-directory: ./terraform/infra
         run: terraform init
 
       - name: Terraform Validate
-        working-directory: ./terraform
+        working-directory: ./terraform/infra
         run: terraform validate
 
       - name: Terraform Plan
-        working-directory: ./terraform
-        run: terraform plan -input=false -var="aws_region=us-east-1"
-      
+        working-directory: ./terraform/infra
+        run: terraform plan -input=false -var="aws_region=${{ env.AWS_REGION }}"
+
       - name: Import OIDC Provider if not yet imported
-        working-directory: ./terraform
+        working-directory: ./terraform/infra
         run: |
           set -e
           if ! terraform state show aws_iam_openid_connect_provider.github_actions > /dev/null 2>&1; then
             terraform import aws_iam_openid_connect_provider.github_actions arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:oidc-provider/token.actions.githubusercontent.com
           fi
-      
 
       - name: Terraform Apply
         if: github.event_name == 'push' && github.ref == 'refs/heads/clouds'
-        working-directory: ./terraform
-        run: terraform apply -auto-approve -input=false -var="aws_region=us-east-1"
+        working-directory: ./terraform/infra
+        run: terraform apply -auto-approve -input=false -var="aws_region=${{ env.AWS_REGION }}"
 
       - name: Get Terraform Outputs
-        id: tfoutputs
-        working-directory: ./terraform
+        id: get_outputs
+        working-directory: ./terraform/infra
         run: |
-          echo "CLUSTER_NAME=$(terraform output -raw cluster_name)" >> $GITHUB_ENV
-          echo "AWS_REGION=$(terraform output -raw aws_region)" >> $GITHUB_ENV
-          echo "EKS_CLUSTER=$(terraform output -raw cluster_name)" >> $GITHUB_ENV
-          echo "ROLE_ARN=$(terraform output -raw github_actions_role_arn)" >> $GITHUB_ENV
-          echo "VPC_ID=$(terraform output -raw vpc_id)" >> $GITHUB_ENV
-          echo "PRIVATE_SUBNETS=$(terraform output -raw private_subnets)" >> $GITHUB_ENV
-          echo "PUBLIC_SUBNETS=$(terraform output -raw public_subnets)" >> $GITHUB_ENV
-          echo "CONFIGURE_KUBECTL=$(terraform output -raw configure_kubectl)" >> $GITHUB_ENV
-          echo "GITHUB_REPO=$(terraform output -raw github_repository)" >> $GITHUB_ENV
-          echo "GITHUB_ACTIONS_ROLE_ARN=$(terraform output -raw github_actions_role_arn)" >> $GITHUB_ENV
-          echo "GITHUB_ACTIONS_ROLE_NAME=$(terraform output -raw github_actions_role_name)" >> $GITHUB_ENV
-          echo "GITHUB_ACTIONS_ROLE_POLICY_ARN=$(terraform output -raw github_actions_role_policy_arn)" >> $GITHUB_ENV
-          echo "GITHUB_ACTIONS_ROLE_POLICY_NAME=$(terraform output -raw github_actions_role_policy_name)" >> $GITHUB_ENV
-          echo "GITHUB_ACTIONS_ROLE_POLICY_ARN=$(terraform output -raw github_actions_role_policy_arn)" >> $GITHUB_ENV
-          echo "GITHUB_ACTIONS_ROLE_POLICY_NAME=$(terraform output -raw github_actions_role_policy_name)" >> $GITHUB_ENV
-          echo "GITHUB_ACTIONS_ROLE_POLICY_ARN=$(terraform output -raw github_actions_role_policy_arn)" >> $GITHUB_ENV
-          echo "GITHUB_ACTIONS_ROLE_POLICY_NAME=$(terraform output -raw github_actions_role_policy_name)" >> $GITHUB_ENV
+          echo "::set-output name=cluster_endpoint::$(terraform output -raw cluster_endpoint)"
+          echo "::set-output name=cluster_ca_certificate::$(terraform output -raw cluster_certificate_authority_data)"
+          echo "::set-output name=cluster_name::$(terraform output -raw cluster_name)"
 
-
-  # Stage 2: Build, Scan, and Sign (runs first)
-  build-scan-sign:
+  terraform-k8s:
+    name: Deploy Kubernetes Resources via Terraform
     runs-on: ubuntu-latest
     needs: terraform-infra
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.6.0
+
+      - name: Terraform Init
+        working-directory: ./terraform/k8s
+        run: terraform init
+
+      - name: Terraform Apply Kubernetes Resources
+        working-directory: ./terraform/k8s
+        env:
+          TF_VAR_cluster_endpoint: ${{ needs.terraform-infra.outputs.cluster_endpoint }}
+          TF_VAR_cluster_ca_certificate: ${{ needs.terraform-infra.outputs.cluster_ca_certificate }}
+          TF_VAR_cluster_name: ${{ needs.terraform-infra.outputs.cluster_name }}
+        run: terraform apply -auto-approve -input=false
+
+  build-scan-sign:
+    name: Build, Scan, and Sign Docker Image
+    runs-on: ubuntu-latest
+    needs: terraform-k8s
     outputs:
       image_uri: ${{ steps.push.outputs.digest }}
     steps:
@@ -129,7 +140,6 @@ jobs:
           docker build -t ${{ env.DOCKER_IMAGE }}:latest ./app
           docker push ${{ env.DOCKER_IMAGE }}:$IMAGE_TAG
           docker push ${{ env.DOCKER_IMAGE }}:latest
-          # Fixed: Get proper digest
           DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' ${{ env.DOCKER_IMAGE }}:$IMAGE_TAG | cut -d'@' -f2)
           echo "digest=${{ env.DOCKER_IMAGE }}@${DIGEST}" >> $GITHUB_OUTPUT
 
@@ -160,21 +170,12 @@ jobs:
           mv cosign $HOME/.local/bin/cosign
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      # Fixed: Proper heredoc syntax
       - name: Generate Cosign Key Pair
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           COSIGN_PASSWORD="" cosign generate-key-pair
-          {
-            echo 'COSIGN_PRIVATE_KEY<<EOF'
-            cat cosign.key
-            echo 'EOF'
-          } >> $GITHUB_ENV
-          {
-            echo 'COSIGN_PUBLIC_KEY<<EOF'
-            cat cosign.pub
-            echo 'EOF'
-          } >> $GITHUB_ENV
+          echo 'COSIGN_PRIVATE_KEY<> $GITHUB_ENV
+          echo 'COSIGN_PUBLIC_KEY<> $GITHUB_ENV
 
       - name: Sign Docker Image
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -197,8 +198,8 @@ jobs:
           name: cosign-public-key
           path: cosign.pub
 
-  # Stage 3: Security Scan (runs after build, before deploy)
   security-scan:
+    name: Security Scan After Build
     runs-on: ubuntu-latest
     needs: build-scan-sign
     steps:
@@ -224,27 +225,19 @@ jobs:
           name: security-report
           path: reports/
 
-  # Stage 4: Deploy (runs last, only after security scan passes)
   deploy:
+    name: Deploy Kubernetes Resources and App
     runs-on: ubuntu-latest
-    needs: [terraform-infra, build-scan-sign, security-scan]  # Changed: Now waits for both jobs
+    needs: [terraform-infra, build-scan-sign, security-scan]
     if: github.event_name == 'push' && github.ref == 'refs/heads/clouds'
+    env:
+      EKS_CLUSTER: ${{ needs.terraform-infra.outputs.cluster_name }}
+      AWS_REGION: ${{ env.AWS_REGION }}
+      IMAGE_TAG: ${{ github.sha }}
+      IMAGE_URI: ${{ env.DOCKER_IMAGE }}:${{ github.sha }}
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-
-      - name: Load environment variables
-        run: |
-          if [ -f .env ]; then
-            grep -v 'PASSWORD\|SECRET\|KEY\|TOKEN' .env | grep -v '^#' | grep -v '^$' >> $GITHUB_ENV
-          fi
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          role-session-name: GitHubActions
-          aws-region: ${{ env.AWS_REGION }}
 
       - name: Update kubeconfig
         run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER }}
@@ -268,44 +261,23 @@ jobs:
         env:
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          # Load environment variables from .env file
           if [ -f .env ]; then
             export $(grep -v 'PASSWORD\|SECRET\|KEY\|TOKEN' .env | grep -v '^#' | grep -v '^$' | xargs)
           fi
-
-          # Set deployment variables
           export IMAGE_URI=${{ env.DOCKER_IMAGE }}:${IMAGE_TAG}
           export APP_NAME=${APP_NAME:-secure-app}
           export SERVICE_NAME=${SERVICE_NAME:-secure-app-service}
           export DEPLOYMENT_NAME=${DEPLOYMENT_NAME:-secure-app-deployment}
           export NODE_ENV=${NODE_ENV:-production}
           export NAMESPACE=${NAMESPACE:-default}
-
-          echo "Deploying with configuration:"
-          echo "Image: $IMAGE_URI"
-          echo "App: $APP_NAME"
-          echo "Service: $SERVICE_NAME"
-          echo "Deployment: $DEPLOYMENT_NAME"
-          echo "Environment: $NODE_ENV"
-          echo "Namespace: $NAMESPACE"
-
-          # Create namespace if it doesn't exist
           kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
-
-          # Apply Kyverno policy for image verification
           if [ -f "k8s/policy.yaml" ]; then
             envsubst < k8s/policy.yaml | kubectl apply -f -
           fi
-
-          # Deploy application with environment variable substitution
           envsubst < k8s/deployment.yaml | kubectl apply -f -
           envsubst < k8s/service.yaml | kubectl apply -f -
           envsubst < k8s/ingress.yaml | kubectl apply -f -
-
-          # Wait for deployment to be ready
           kubectl rollout status deployment/$DEPLOYMENT_NAME -n $NAMESPACE --timeout=300s
-
-          # Show deployment status
           kubectl get pods -n $NAMESPACE -l app=$APP_NAME
           kubectl get service -n $NAMESPACE $SERVICE_NAME
 
