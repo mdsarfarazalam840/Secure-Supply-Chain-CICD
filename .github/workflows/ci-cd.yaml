@@ -50,6 +50,7 @@ jobs:
         run: terraform plan -input=false -var="aws_region=us-east-1"
       
       - name: Import OIDC Provider if not yet imported
+        working-directory: ./terraform
         run: |
           set -e
           if ! terraform state show aws_iam_openid_connect_provider.github_actions > /dev/null 2>&1; then
