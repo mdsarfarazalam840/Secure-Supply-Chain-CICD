@@ -31,7 +31,15 @@ jobs:
 
       - name: Terraform Init
         working-directory: ./terraform
-        run: terraform init
+        run: terraform init -reconfigure
+
+      - name: Terraform Show State
+        working-directory: ./terraform
+        run: terraform show
+
+      - name: Terraform State List
+        working-directory: ./terraform
+        run: terraform state list
 
       - name: Terraform Destroy
         working-directory: ./terraform

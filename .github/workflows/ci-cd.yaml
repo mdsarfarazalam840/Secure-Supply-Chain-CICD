@@ -48,6 +48,14 @@ jobs:
       - name: Terraform Plan
         working-directory: ./terraform
         run: terraform plan -input=false -var="aws_region=us-east-1"
+      
+      - name: Import OIDC Provider if not yet imported
+        run: |
+          set -e
+          if ! terraform state show aws_iam_openid_connect_provider.github_actions > /dev/null 2>&1; then
+            terraform import aws_iam_openid_connect_provider.github_actions arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:oidc-provider/token.actions.githubusercontent.com
+          fi
+      
 
       - name: Terraform Apply
         if: github.event_name == 'push' && github.ref == 'refs/heads/clouds'
