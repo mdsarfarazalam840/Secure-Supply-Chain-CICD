@@ -72,6 +72,18 @@ jobs:
         run: |
           echo "🗑️ Destroying Kubernetes resources..."
           terraform init -reconfigure
+          # Discover cluster details to satisfy required variables
+          CLUSTER_NAME=$(aws eks list-clusters --region "${AWS_REGION}" --query "clusters[?contains(@, '${PROJECT_NAME}')][0]" --output text)
+          if [ -z "${CLUSTER_NAME}" ] || [ "${CLUSTER_NAME}" = "None" ]; then
+            echo "No matching EKS cluster found for project '${PROJECT_NAME}'. Skipping K8s destroy."
+            exit 0
+          fi
+          echo "Found cluster: ${CLUSTER_NAME}"
+          DESC=$(aws eks describe-cluster --region "${AWS_REGION}" --name "${CLUSTER_NAME}" --query 'cluster.{endpoint:endpoint,ca:certificateAuthority.data}' --output json)
+          export TF_VAR_cluster_name="${CLUSTER_NAME}"
+          export TF_VAR_cluster_endpoint=$(echo "${DESC}" | jq -r .endpoint)
+          export TF_VAR_cluster_ca_certificate=$(echo "${DESC}" | jq -r .ca)
+          export TF_VAR_common_tags='{}'
           terraform destroy -auto-approve -input=false || echo "No K8s resources to destroy"
 
       - name: Destroy Infrastructure
