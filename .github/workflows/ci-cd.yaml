@@ -2,7 +2,8 @@ name: Secure Supply Chain CI/CD
 
 on:
   push:
-    branches: ["main", "clouds"]
+    # branches: ["main", "clouds"]
+    branches: ["main"]
   pull_request:
     branches: ["main"]
 
