@@ -2,16 +2,25 @@ name: Destroy AWS Infrastructure
 
 on:
   workflow_dispatch:  # This lets you trigger manually from the GitHub Actions UI
+    inputs:
+      confirm_destroy:
+        description: 'Type "DESTROY" to confirm infrastructure destruction'
+        required: true
+        default: ''
 
 permissions:
   id-token: write
   contents: read
 
+env:
+  AWS_REGION: us-east-1
+  PROJECT_NAME: secure-supply-chain
 
 jobs:
   destroy:
-    name: Terraform Destroy
+    name: Comprehensive Infrastructure Destruction
     runs-on: ubuntu-latest
+    if: github.event.inputs.confirm_destroy == 'DESTROY'
 
     steps:
       - name: Checkout code
@@ -22,25 +31,133 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           role-session-name: GitHubActions
-          aws-region: us-east-1  # or your configured region
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.6.0
 
-      - name: Terraform Init
-        working-directory: ./terraform
-        run: terraform init -reconfigure
+      - name: Make scripts executable
+        run: |
+          chmod +x scripts/*.sh
 
-      - name: Terraform Show State
-        working-directory: ./terraform
-        run: terraform show
+      - name: Pre-destroy cleanup
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
+          PROJECT_NAME: ${{ env.PROJECT_NAME }}
+        run: |
+          echo "🧹 Starting pre-destroy cleanup..."
+          
+          # Delete any remaining load balancers
+          echo "Deleting Application Load Balancers..."
+          aws elbv2 describe-load-balancers --query 'LoadBalancers[?contains(LoadBalancerName, `secure-supply-chain`)].LoadBalancerArn' --output text | xargs -I {} aws elbv2 delete-load-balancer --load-balancer-arn {} || echo "No load balancers to delete"
+          
+          # Delete any remaining target groups
+          echo "Deleting Target Groups..."
+          aws elbv2 describe-target-groups --query 'TargetGroups[?contains(TargetGroupName, `secure-supply-chain`)].TargetGroupArn' --output text | xargs -I {} aws elbv2 delete-target-group --target-group-arn {} || echo "No target groups to delete"
+          
+          # Delete any remaining security groups (except default)
+          echo "Deleting Security Groups..."
+          aws ec2 describe-security-groups --query 'SecurityGroups[?contains(GroupName, `secure-supply-chain`) && GroupName != `default`].GroupId' --output text | xargs -I {} aws ec2 delete-security-group --group-id {} || echo "No security groups to delete"
+          
+          # Delete any remaining CloudWatch log groups
+          echo "Deleting CloudWatch Log Groups..."
+          aws logs describe-log-groups --log-group-name-prefix "/aws/eks/${PROJECT_NAME}" --query 'logGroups[].logGroupName' --output text | xargs -I {} aws logs delete-log-group --log-group-name {} || echo "No log groups to delete"
+          
+          echo "✅ Pre-destroy cleanup completed"
 
-      - name: Terraform State List
-        working-directory: ./terraform
-        run: terraform state list
+      - name: Destroy Kubernetes Resources
+        working-directory: ./terraform/k8s
+        run: |
+          echo "🗑️ Destroying Kubernetes resources..."
+          terraform init -reconfigure
+          terraform destroy -auto-approve -input=false || echo "No K8s resources to destroy"
 
-      - name: Terraform Destroy
-        working-directory: ./terraform
-        run: terraform destroy -auto-approve -input=false -var="aws_region=us-east-1"
+      - name: Destroy Infrastructure
+        working-directory: ./terraform/infra
+        run: |
+          echo "🗑️ Destroying AWS infrastructure..."
+          terraform init -reconfigure
+          
+          # Show current state before destruction
+          echo "📋 Current Terraform state:"
+          terraform state list
+          
+          # Destroy infrastructure
+          terraform destroy -auto-approve -input=false -var="aws_region=${{ env.AWS_REGION }}"
+          
+          echo "✅ Infrastructure destruction completed"
+
+      - name: Post-destroy cleanup
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
+          PROJECT_NAME: ${{ env.PROJECT_NAME }}
+        run: |
+          echo "🧹 Starting post-destroy cleanup..."
+          
+          # Delete any remaining EBS volumes
+          echo "Deleting EBS volumes..."
+          aws ec2 describe-volumes --query 'Volumes[?contains(Tags[?Key==`Name`].Value, `secure-supply-chain`)].VolumeId' --output text | xargs -I {} aws ec2 delete-volume --volume-id {} || echo "No volumes to delete"
+          
+          # Delete any remaining snapshots
+          echo "Deleting EBS snapshots..."
+          aws ec2 describe-snapshots --owner-ids self --query 'Snapshots[?contains(Description, `secure-supply-chain`)].SnapshotId' --output text | xargs -I {} aws ec2 delete-snapshot --snapshot-id {} || echo "No snapshots to delete"
+          
+          # Delete any remaining NAT Gateways
+          echo "Deleting NAT Gateways..."
+          aws ec2 describe-nat-gateways --query 'NatGateways[?contains(Tags[?Key==`Name`].Value, `secure-supply-chain`)].NatGatewayId' --output text | xargs -I {} aws ec2 delete-nat-gateway --nat-gateway-id {} || echo "No NAT gateways to delete"
+          
+          # Delete any remaining Internet Gateways
+          echo "Deleting Internet Gateways..."
+          aws ec2 describe-internet-gateways --query 'InternetGateways[?contains(Tags[?Key==`Name`].Value, `secure-supply-chain`)].InternetGatewayId' --output text | xargs -I {} aws ec2 detach-internet-gateway --internet-gateway-id {} --vpc-id $(aws ec2 describe-internet-gateways --query 'InternetGateways[?contains(Tags[?Key==`Name`].Value, `secure-supply-chain`)].Attachments[0].VpcId' --output text) && aws ec2 delete-internet-gateway --internet-gateway-id {} || echo "No internet gateways to delete"
+          
+          echo "✅ Post-destroy cleanup completed"
+
+      - name: Verify Destruction
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
+          PROJECT_NAME: ${{ env.PROJECT_NAME }}
+        run: |
+          echo "🔍 Verifying destruction..."
+          
+          # Check for remaining EKS clusters
+          REMAINING_CLUSTERS=$(aws eks list-clusters --query 'clusters[?contains(@, `secure-supply-chain`)]' --output text)
+          if [ -n "$REMAINING_CLUSTERS" ]; then
+            echo "⚠️ Warning: The following EKS clusters still exist:"
+            echo "$REMAINING_CLUSTERS"
+          else
+            echo "✅ No EKS clusters found"
+          fi
+          
+          # Check for remaining VPCs
+          REMAINING_VPCS=$(aws ec2 describe-vpcs --query 'Vpcs[?contains(Tags[?Key==`Name`].Value, `secure-supply-chain`)].VpcId' --output text)
+          if [ -n "$REMAINING_VPCS" ]; then
+            echo "⚠️ Warning: The following VPCs still exist:"
+            echo "$REMAINING_VPCS"
+          else
+            echo "✅ No VPCs found"
+          fi
+          
+          # Check for remaining IAM roles
+          REMAINING_ROLES=$(aws iam list-roles --query 'Roles[?contains(RoleName, `secure-supply-chain`)].RoleName' --output text)
+          if [ -n "$REMAINING_ROLES" ]; then
+            echo "⚠️ Warning: The following IAM roles still exist:"
+            echo "$REMAINING_ROLES"
+          else
+            echo "✅ No IAM roles found"
+          fi
+          
+          echo "🎉 Destruction verification completed!"
+
+  confirmation-required:
+    name: Confirmation Required
+    runs-on: ubuntu-latest
+    if: github.event.inputs.confirm_destroy != 'DESTROY'
+    steps:
+      - name: Show Confirmation Message
+        run: |
+          echo "❌ Destruction cancelled!"
+          echo "To destroy the infrastructure, you must type 'DESTROY' in the confirmation field."
+          echo "This is a safety measure to prevent accidental destruction of resources."
+          exit 1

@@ -37,15 +37,8 @@ cleanup_existing_resources() {
         aws logs delete-log-group --log-group-name "$LOG_GROUP_NAME" || print_warning "Failed to delete log group (may not exist)"
     fi
     
-    # Delete existing IAM role if it exists (optional - uncomment if needed)
-    # ROLE_NAME="${PROJECT_NAME}-github-actions"
-    # if aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
-    #     print_warning "Deleting existing IAM role: $ROLE_NAME"
-    #     # First, detach any policies
-    #     aws iam list-attached-role-policies --role-name "$ROLE_NAME" --query 'AttachedPolicies[].PolicyArn' --output text | xargs -I {} aws iam detach-role-policy --role-name "$ROLE_NAME" --policy-arn {} || true
-    #     aws iam list-role-policies --role-name "$ROLE_NAME" --query 'PolicyNames[]' --output text | xargs -I {} aws iam delete-role-policy --role-name "$ROLE_NAME" --policy-name {} || true
-    #     aws iam delete-role --role-name "$ROLE_NAME" || print_warning "Failed to delete IAM role"
-    # fi
+    # Note: IAM roles are not deleted during cleanup to avoid breaking existing configurations
+    # They will be imported into Terraform state instead
     
     print_success "Cleanup completed"
 }
@@ -99,6 +92,16 @@ terraform_apply() {
     print_status "Importing OIDC Provider if needed..."
     if ! terraform state show aws_iam_openid_connect_provider.github_actions > /dev/null 2>&1; then
         terraform import aws_iam_openid_connect_provider.github_actions "arn:aws:iam::${AWS_ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com" || print_warning "OIDC Provider import failed (may already exist)"
+    fi
+    
+    # Import IAM Role if it exists but not in state
+    print_status "Importing IAM Role if needed..."
+    ROLE_NAME="${PROJECT_NAME}-github-actions"
+    if ! terraform state show aws_iam_role.github_actions > /dev/null 2>&1; then
+        if aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
+            print_warning "IAM Role $ROLE_NAME exists, importing into Terraform state..."
+            terraform import aws_iam_role.github_actions "$ROLE_NAME" || print_warning "IAM Role import failed"
+        fi
     fi
     
     # Apply the plan

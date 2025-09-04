@@ -101,9 +101,7 @@ resource "aws_iam_role" "github_actions" {
     ]
   })
 
-  lifecycle {
-    ignore_changes = [name]
-  }
+  tags = var.common_tags
 }
 
 # IAM Policy for EKS access
