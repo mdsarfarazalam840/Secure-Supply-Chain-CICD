@@ -82,7 +82,7 @@ jobs:
           
           # Show current state before destruction
           echo "📋 Current Terraform state:"
-          terraform state list
+          terraform state list || echo "No state found (remote or not initialized). Continuing..."
           
           # Destroy infrastructure
           terraform destroy -auto-approve -input=false -var="aws_region=${{ env.AWS_REGION }}"
