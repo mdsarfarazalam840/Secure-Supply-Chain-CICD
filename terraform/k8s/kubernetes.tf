@@ -1,40 +1,28 @@
 # Configure Kubernetes provider
 provider "kubernetes" {
-  host                   = module.eks.cluster_endpoint
-  cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
+  host                   = var.cluster_endpoint
+  cluster_ca_certificate = base64decode(var.cluster_ca_certificate)
   exec {
     api_version = "client.authentication.k8s.io/v1beta1"
     command     = "aws"
-    args        = ["eks", "get-token", "--cluster-name", module.eks.cluster_name]
+    args        = ["eks", "get-token", "--cluster-name", var.cluster_name]
   }
 }
 
 # Configure Helm provider
 provider "helm" {
   kubernetes {
-    host                   = module.eks.cluster_endpoint
-    cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
+    host                   = var.cluster_endpoint
+    cluster_ca_certificate = base64decode(var.cluster_ca_certificate)
     exec {
       api_version = "client.authentication.k8s.io/v1beta1"
       command     = "aws"
-      args        = ["eks", "get-token", "--cluster-name", module.eks.cluster_name]
+      args        = ["eks", "get-token", "--cluster-name", var.cluster_name]
     }
   }
 }
 
-# Create OIDC provider for GitHub Actions
-resource "aws_iam_openid_connect_provider" "github_actions" {
-  url = "https://token.actions.githubusercontent.com"
-
-  client_id_list = ["sts.amazonaws.com"]
-
-  thumbprint_list = [
-    "6938fd4d98bab03faadb97b34396831e3780aea1",
-    "1c58a3a8518e8759bf075b76b750d4f2df264fcd"
-  ]
-
-  tags = var.common_tags
-}
+# OIDC provider is created in the infra configuration
 
 # Install Kyverno for image verification
 resource "helm_release" "kyverno" {
@@ -49,7 +37,7 @@ resource "helm_release" "kyverno" {
     value = "1"
   }
 
-  depends_on = [module.eks]
+  # No explicit dependencies needed as cluster endpoint is provided via variables
 }
 
 # Install Kyverno policies
@@ -96,5 +84,5 @@ resource "helm_release" "ingress_nginx" {
     value = "256Mi"
   }
 
-  depends_on = [module.eks]
+  # No explicit dependencies needed as cluster endpoint is provided via variables
 }
