@@ -37,7 +37,7 @@ resource "aws_iam_openid_connect_provider" "github_actions" {
 # EKS Cluster
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
-  version = "~> 19.0"
+  version = "~> 20.0"
 
   cluster_name    = "${var.project_name}-cluster"
   cluster_version = "1.28"
@@ -46,6 +46,12 @@ module "eks" {
   subnet_ids = module.vpc.private_subnets
 
   cluster_endpoint_public_access = true
+
+  # Disable KMS encryption to avoid permission issues
+  cluster_encryption_config = {}
+
+  # Handle existing CloudWatch log groups
+  create_cloudwatch_log_group = false
 
   eks_managed_node_groups = {
     general = {
@@ -94,6 +100,10 @@ resource "aws_iam_role" "github_actions" {
       }
     ]
   })
+
+  lifecycle {
+    ignore_changes = [name]
+  }
 }
 
 # IAM Policy for EKS access
@@ -111,6 +121,35 @@ resource "aws_iam_role_policy" "eks_access" {
           "eks:ListClusters"
         ]
         Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "kms:CreateKey",
+          "kms:DescribeKey",
+          "kms:ListKeys",
+          "kms:ListAliases",
+          "kms:GetKeyPolicy",
+          "kms:PutKeyPolicy",
+          "kms:CreateAlias",
+          "kms:DeleteAlias",
+          "kms:UpdateAlias",
+          "kms:TagResource",
+          "kms:UntagResource",
+          "kms:ScheduleKeyDeletion",
+          "kms:CancelKeyDeletion"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:DescribeLogGroups",
+          "logs:PutRetentionPolicy",
+          "logs:DeleteLogGroup"
+        ]
+        Resource = "*"
       }
     ]
   })
@@ -118,6 +157,7 @@ resource "aws_iam_role_policy" "eks_access" {
 
 # Get current AWS account ID
 data "aws_caller_identity" "current" {}
+
 
 # Outputs
 

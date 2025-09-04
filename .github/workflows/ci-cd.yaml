@@ -20,9 +20,9 @@ jobs:
     name: Provision/Update AWS Infra and EKS Cluster
     runs-on: ubuntu-latest
     outputs:
-      cluster_endpoint: ${{ steps.get_outputs.outputs.cluster_endpoint }}
-      cluster_ca_certificate: ${{ steps.get_outputs.outputs.cluster_ca_certificate }}
-      cluster_name: ${{ steps.get_outputs.outputs.cluster_name }}
+      cluster_endpoint: ${{ steps.terraform_lifecycle.outputs.cluster_endpoint }}
+      cluster_ca_certificate: ${{ steps.terraform_lifecycle.outputs.cluster_ca_certificate }}
+      cluster_name: ${{ steps.terraform_lifecycle.outputs.cluster_name }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -32,75 +32,27 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           role-session-name: GitHubActions
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: ${{ vars.AWS_REGION }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.6.0
 
-      - name: Terraform Init
-        working-directory: ./terraform/infra
-        run: terraform init
-
-      - name: Terraform Validate
-        working-directory: ./terraform/infra
-        run: terraform validate
-
-      - name: Terraform Plan
-        working-directory: ./terraform/infra
-        run: terraform plan -input=false -var="aws_region=${{ env.AWS_REGION }}"
-
-      - name: Import OIDC Provider if not yet imported
-        working-directory: ./terraform/infra
-        run: |
-          set -e
-          if ! terraform state show aws_iam_openid_connect_provider.github_actions > /dev/null 2>&1; then
-            terraform import aws_iam_openid_connect_provider.github_actions arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:oidc-provider/token.actions.githubusercontent.com
-          fi
-
-      - name: Terraform Apply
-        if: github.event_name == 'push' && github.ref == 'refs/heads/clouds'
-        working-directory: ./terraform/infra
-        run: terraform apply -auto-approve -input=false -var="aws_region=${{ env.AWS_REGION }}"
-
-      - name: Get Terraform Outputs
-        id: get_outputs
-        working-directory: ./terraform/infra
-        run: |
-          echo "::set-output name=cluster_endpoint::$(terraform output -raw cluster_endpoint)"
-          echo "::set-output name=cluster_ca_certificate::$(terraform output -raw cluster_certificate_authority_data)"
-          echo "::set-output name=cluster_name::$(terraform output -raw cluster_name)"
-
-  terraform-k8s:
-    name: Deploy Kubernetes Resources via Terraform
-    runs-on: ubuntu-latest
-    needs: terraform-infra
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: 1.6.0
-
-      - name: Terraform Init
-        working-directory: ./terraform/k8s
-        run: terraform init
-
-      - name: Terraform Apply Kubernetes Resources
-        working-directory: ./terraform/k8s
+      - name: Run Terraform Lifecycle
+        id: terraform_lifecycle
         env:
-          TF_VAR_cluster_endpoint: ${{ needs.terraform-infra.outputs.cluster_endpoint }}
-          TF_VAR_cluster_ca_certificate: ${{ needs.terraform-infra.outputs.cluster_ca_certificate }}
-          TF_VAR_cluster_name: ${{ needs.terraform-infra.outputs.cluster_name }}
-        run: terraform apply -auto-approve -input=false
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          PROJECT_NAME: secure-supply-chain
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: |
+          ./scripts/terraform-lifecycle.sh
+
 
   build-scan-sign:
     name: Build, Scan, and Sign Docker Image
     runs-on: ubuntu-latest
-    needs: terraform-k8s
+    needs: terraform-infra
     outputs:
       image_uri: ${{ steps.push.outputs.digest }}
     steps:
