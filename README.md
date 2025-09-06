@@ -76,4 +76,4 @@ You built an end-to-end secure CI/CD pipeline.
 
 You enforced only signed, vulnerability-free images in Kubernetes.
 
-This is production-grade — and most engineers don’t go this deep → huge interview plus.
+
